@@ -122,7 +122,7 @@ export class WorkflowImporter {
 		const outcomes: WorkflowImportOutcome[] = [];
 
 		for (const item of plan.items) {
-			const outcome = await this.applyItem(item, context);
+			const outcome = await this.applyItem(item, context, bindings);
 			outcomes.push(outcome);
 			// Works for every status: created/updated/skipped all resolve to a real target id.
 			workflowBindings.set(outcome.sourceWorkflowId, outcome.workflow.id);
@@ -134,31 +134,31 @@ export class WorkflowImporter {
 	private async applyItem(
 		item: WorkflowPlanItem,
 		context: WorkflowImportContext,
+		bindings: PackageImportBindings,
 	): Promise<WorkflowImportOutcome> {
 		switch (item.action) {
 			case 'create': {
-				item.entity.id = item.decidedId;
-				const workflow = await this.workflowCreationService.createWorkflow(
-					context.user,
-					item.entity,
-					{
-						projectId: context.projectId,
-						parentFolderId: context.folderId ?? undefined,
-						publicApi: true,
-						source: 'import',
-						sourceWorkflowId: item.sourceWorkflowId,
-					},
-				);
+				const entity = item.entity;
+				applyCredentialBindingsInPlace(entity, bindings.credentials);
+				entity.id = item.decidedId;
+				const workflow = await this.workflowCreationService.createWorkflow(context.user, entity, {
+					projectId: context.projectId,
+					parentFolderId: context.folderId ?? undefined,
+					publicApi: true,
+					source: 'import',
+					sourceWorkflowId: item.sourceWorkflowId,
+				});
 				return { status: 'created', workflow, sourceWorkflowId: item.sourceWorkflowId };
 			}
 
 			case 'update': {
-				const workflow = await this.workflowService.update(
-					context.user,
-					item.entity,
-					item.existing.id,
-					{ publicApi: true, publishIfActive: true, source: 'import' },
-				);
+				const entity = item.entity;
+				applyCredentialBindingsInPlace(entity, bindings.credentials);
+				const workflow = await this.workflowService.update(context.user, entity, item.existing.id, {
+					publicApi: true,
+					publishIfActive: true,
+					source: 'import',
+				});
 				// update() doesn't re-hydrate parentFolder; carry over the existing folder for the result.
 				workflow.parentFolder = item.existing.parentFolder;
 				return { status: 'updated', workflow, sourceWorkflowId: item.sourceWorkflowId };
@@ -170,6 +170,23 @@ export class WorkflowImporter {
 					workflow: item.existing,
 					sourceWorkflowId: item.sourceWorkflowId,
 				};
+		}
+	}
+}
+
+/** Mutates node credential ids on `entity` using the resolved import binding map. */
+function applyCredentialBindingsInPlace(
+	entity: WorkflowEntity,
+	credentialBindings: PackageImportBindings['credentials'],
+): void {
+	for (const node of entity.nodes) {
+		for (const details of Object.values(node.credentials ?? {})) {
+			if (!details.id) continue;
+
+			const targetId = credentialBindings.get(details.id);
+			if (targetId) {
+				details.id = targetId;
+			}
 		}
 	}
 }

@@ -8,6 +8,7 @@ export const IMPORT_PACKAGE_REQUEST_FORM_FIELDS = [
 	'folderId',
 	'credentialMatchingMode',
 	'credentialMissingMode',
+	'credentialBindings',
 	'workflowConflictPolicy',
 	'workflowIdPolicy',
 ] as const;
@@ -22,11 +23,50 @@ const optionalFormId = z
 		return trimmed.length > 0 ? trimmed : undefined;
 	});
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	return Object.entries(value).every(
+		([sourceId, targetId]) =>
+			sourceId.length > 0 && typeof targetId === 'string' && targetId.length > 0,
+	);
+}
+
+const credentialBindingsSchema = z
+	.string()
+	.optional()
+	.transform((value, ctx) => {
+		if (value === undefined || value.trim().length === 0) return {};
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(value);
+		} catch {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message:
+					'credentialBindings must be a JSON object mapping source credential ids to target credential ids',
+			});
+			return z.NEVER;
+		}
+
+		if (!isStringRecord(parsed)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message:
+					'credentialBindings must be a JSON object mapping source credential ids to target credential ids',
+			});
+			return z.NEVER;
+		}
+
+		return parsed;
+	});
+
 export class ImportPackageRequestDto extends Z.class({
 	projectId: optionalFormId,
 	folderId: optionalFormId,
 	credentialMatchingMode: z.enum(['id-only']).optional().default('id-only'),
 	credentialMissingMode: z.enum(['must-preexist']).optional().default('must-preexist'),
+	credentialBindings: credentialBindingsSchema,
 	workflowConflictPolicy: z.enum(['new-version', 'fail', 'skip']),
 	workflowIdPolicy: z.enum(['new', 'source']).optional().default('new'),
 }) {}

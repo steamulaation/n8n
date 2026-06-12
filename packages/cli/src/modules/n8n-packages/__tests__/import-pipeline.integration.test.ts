@@ -37,6 +37,7 @@ import { FORMAT_VERSION } from '../spec/constants';
 import {
 	buildImportPackageBuffer,
 	githubCredentialPayload,
+	PACKAGE_GITHUB_CREDENTIAL_TYPE,
 	serializedWorkflow,
 	serializedWorkflowWithCredential,
 } from './fixtures/package-fixtures';
@@ -47,6 +48,7 @@ import type { SerializedWorkflow } from '../spec/serialized/workflow.schema';
 type OptionalImportFields =
 	| 'credentialMatchingMode'
 	| 'credentialMissingMode'
+	| 'credentialBindings'
 	| 'workflowConflictPolicy'
 	| 'workflowIdPolicy';
 
@@ -1137,6 +1139,46 @@ describe('ImportPipeline credential resolution', () => {
 			[globalCredential.id]: globalCredential.id,
 		});
 		expect(await Container.get(WorkflowRepository).count()).toBe(2);
+	});
+
+	it('should succeed when importing workflows with explicit credential bindings', async () => {
+		const owner = await createOwner();
+		const personalProject = await Container.get(ProjectRepository).getPersonalProjectForUserOrFail(
+			owner.id,
+		);
+		const targetCredential = await saveOwnedCredential(
+			githubCredentialPayload({ name: 'Target GitHub' }),
+			{
+				project: personalProject,
+			},
+		);
+
+		const result = await importPackage({
+			user: owner,
+			credentialBindings: new Map([['source-credential', targetCredential.id]]),
+			packageBuffer: await buildImportPackageBuffer(
+				[
+					serializedWorkflowWithCredential({
+						id: 'wf-bound-cred',
+						name: 'With bound cred',
+						credentialId: 'source-credential',
+						credentialName: 'Source GitHub',
+					}),
+				],
+				{ sourceId },
+			),
+		});
+
+		expect(result.bindings.credentials).toEqual({
+			'source-credential': targetCredential.id,
+		});
+
+		const workflow = await Container.get(WorkflowRepository).findOneOrFail({
+			where: { name: 'With bound cred' },
+		});
+		expect(workflow.nodes[0].credentials?.[PACKAGE_GITHUB_CREDENTIAL_TYPE]?.id).toBe(
+			targetCredential.id,
+		);
 	});
 
 	it('reports mixed unknown_type and not_found failures in one response', async () => {
